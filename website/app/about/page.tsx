@@ -4,19 +4,19 @@ export default function AboutPage() {
   const teamMembers = [
     {
       name: "Ravindra Lakkireddy",
-      role: "Lead Developer",
+      role: "Co-founder, CTO",
       bio: "Head of training, scoring, and data collection, handling abalation studies as well as quantum integration",
       image: "/team/member1.jpg"
     },
     {
       name: "Gianluca Radice", 
-      role: "ML Engineer",
+      role: "Entry-level ML Intern",
       bio: "Defined the frameworks for the GCNNs used, lead efforts for constructing a full pipeline from SMILE to website output",
       image: "/team/member2.jpg"
     },
     {
       name: "Denis Motuzenko",
-      role: "Research Scientist",
+      role: "Co-founder, COO",
       bio: "Conceptual and chemical leader, engaged with the interpretation layer and organized quantum logic",
       image: "/team/member3.jpg"
     }
