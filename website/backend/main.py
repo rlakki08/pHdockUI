@@ -23,15 +23,27 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 try:
     from src.input_processing import process_input
     from src.conformer_generation import generate_conformers
-    from src.protonation_engine import protonate_ligand
+    from src.protonation_engine import protonate_ligand, ProtonationEngine
     from src.pka_prediction import predict_pka_ensemble
-    from src.docking_integration import run_docking
+    from src.docking_integration import run_docking, run_ph_ensemble_docking
     from src.model_evaluation import evaluate_model_performance
+    from src.thermodynamics import ThermodynamicEnsemble
     MODULES_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Could not import modules: {e}")
     print("Using mock implementations for demonstration")
     MODULES_AVAILABLE = False
+    
+    # Try importing from local backend copies
+    try:
+        from thermodynamics import ThermodynamicEnsemble
+        from protonation_engine import ProtonationEngine
+        from docking_integration import run_ph_ensemble_docking
+        print("✓ Loaded thermodynamic modules from backend directory")
+        THERMODYNAMICS_AVAILABLE = True
+    except ImportError:
+        print("⚠ Thermodynamic modules not available")
+        THERMODYNAMICS_AVAILABLE = False
 
 # Try to load improved pKa model components
 IMPROVED_PKA_MODEL = None
@@ -90,6 +102,8 @@ class JobRequest(BaseModel):
     quantum_fallback: bool = False
     docking_backend: str = "gnina"
     receptor_id: Optional[str] = "mock"  # Default to mock for now
+    ph_ensemble_mode: bool = False
+    probability_threshold: float = 0.01
 
 class JobResponse(BaseModel):
     job_id: str
@@ -511,34 +525,123 @@ async def process_job(job_id: str, request: JobRequest):
             if potential_receptor.exists():
                 receptor_path = str(potential_receptor)
 
-        # Use real docking if receptor is available and modules are loaded
-        if MODULES_AVAILABLE and receptor_path:
+        # Initialize ensemble_results
+        ensemble_results = None
+        
+        # Use pH-ensemble mode if requested
+        if request.ph_ensemble_mode:
             try:
-                docking_results = run_docking(
-                    protonation_states=protonation_states,
-                    receptor_path=receptor_path
+                from thermodynamics import ThermodynamicEnsemble
+                from protonation_engine import ProtonationEngine
+                from docking_integration import run_ph_ensemble_docking
+                from rdkit import Chem
+                
+                # Convert SMILES to RDKit molecule
+                mol = Chem.MolFromSmiles(mol_data.get('smiles', ''))
+                if mol is None:
+                    raise ValueError("Could not parse molecule SMILES")
+                
+                # Run pH-ensemble docking
+                results_dict = run_ph_ensemble_docking(
+                    mol=mol,
+                    receptor_pdb=receptor_path or "mock",
+                    ph=request.ph_value,
+                    probability_threshold=request.probability_threshold
                 )
+                
+                # Extract ensemble results
+                ensemble_results = {
+                    "ensemble_delta_g": results_dict["ensemble_delta_g"],
+                    "ph_value": results_dict["ph"],
+                    "num_states": results_dict["num_states"],
+                    "probability_threshold": results_dict["probability_threshold"],
+                    "microstates": results_dict["microstates"]
+                }
+                
+                # Also populate traditional docking_results for compatibility
+                docking_results = {
+                    "best_score": min(m["delta_g"] for m in results_dict["microstates"]),
+                    "poses": [
+                        {"state": m["state_id"], "score": m["delta_g"], "confidence": m["probability"]}
+                        for m in results_dict["microstates"]
+                    ],
+                    "ensemble_mode": True
+                }
+                
             except Exception as e:
-                print(f"Real docking failed, using mock: {e}")
+                print(f"pH-ensemble docking failed: {e}")
+                import traceback
+                traceback.print_exc()
+                
+                # Fallback to mock ensemble results
+                import random
+                num_states = 3
+                microstates = []
+                for i in range(num_states):
+                    prob = random.uniform(0.1, 0.8)
+                    delta_g = -8.5 + i * 0.5 + random.uniform(-0.3, 0.3)
+                    microstates.append({
+                        "state_id": i,
+                        "probability": prob,
+                        "delta_g": delta_g,
+                        "charge": [-1, 0, 0][i] if i < 3 else 0,
+                        "smiles": protonation_states[i if i < len(protonation_states) else 0].get('smiles', '')
+                    })
+                
+                # Normalize probabilities
+                total_prob = sum(m["probability"] for m in microstates)
+                for m in microstates:
+                    m["probability"] /= total_prob
+                
+                # Calculate ensemble energy
+                ensemble_delta_g = sum(m["probability"] * m["delta_g"] for m in microstates)
+                
+                ensemble_results = {
+                    "ensemble_delta_g": ensemble_delta_g,
+                    "ph_value": request.ph_value,
+                    "num_states": num_states,
+                    "probability_threshold": request.probability_threshold,
+                    "microstates": microstates
+                }
+                
+                docking_results = {
+                    "best_score": min(m["delta_g"] for m in microstates),
+                    "poses": [
+                        {"state": m["state_id"], "score": m["delta_g"], "confidence": m["probability"]}
+                        for m in microstates
+                    ],
+                    "ensemble_mode": True,
+                    "error": f"Ensemble docking failed (using mock): {str(e)}"
+                }
+        else:
+            # Traditional single-state docking
+            if MODULES_AVAILABLE and receptor_path:
+                try:
+                    docking_results = run_docking(
+                        protonation_states=protonation_states,
+                        receptor_path=receptor_path
+                    )
+                except Exception as e:
+                    print(f"Real docking failed, using mock: {e}")
+                    docking_results = {
+                        "best_score": -8.5,
+                        "poses": [
+                            {"state": i, "score": -8.5 + i * 0.2}
+                            for i in range(len(protonation_states))
+                        ],
+                        "error": f"Docking failed: {str(e)}"
+                    }
+            else:
+                # Mock docking results
+                import random
                 docking_results = {
                     "best_score": -8.5,
                     "poses": [
-                        {"state": i, "score": -8.5 + i * 0.2}
+                        {"state": i, "score": -8.5 + i * 0.2 + random.uniform(-0.5, 0.5)}
                         for i in range(len(protonation_states))
                     ],
-                    "error": f"Docking failed: {str(e)}"
+                    "receptor_used": request.receptor_id or "mock"
                 }
-        else:
-            # Mock docking results
-            import random
-            docking_results = {
-                "best_score": -8.5,
-                "poses": [
-                    {"state": i, "score": -8.5 + i * 0.2 + random.uniform(-0.5, 0.5)}
-                    for i in range(len(protonation_states))
-                ],
-                "receptor_used": request.receptor_id or "mock"
-            }
         
         # Compile results
         results = {
@@ -548,7 +651,7 @@ async def process_job(job_id: str, request: JobRequest):
                 "molecular_weight": mol_data.get('molecular_weight', 0)
             },
             "pka_predictions": {
-                "global_pka": pka_results.get('predicted_pka', None),
+                "overall_pka": pka_results.get('predicted_pka', None),
                 "site_pkas": pka_results.get('site_pkas', []),
                 "confidence": pka_results.get('confidence', 0)
             },
@@ -565,6 +668,10 @@ async def process_job(job_id: str, request: JobRequest):
             "docking_results": docking_results,
             "conformers_generated": len(conformers)
         }
+        
+        # Add ensemble results if available
+        if ensemble_results:
+            results["ensemble_results"] = ensemble_results
         
         # Update job completion
         jobs_db[job_id]["status"] = "completed"

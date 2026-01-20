@@ -21,7 +21,12 @@ from src.pka_prediction import pKaPredictionModel, train_pka_prediction_model
 from src.protonation_engine import ProtonationEngine, generate_protonation_ensemble
 from src.gnn_model import GNNpKaPredictor
 from src.ensemble_model import EnsemblePredictor
-from src.docking_integration import DockingIntegration, run_full_docking_pipeline
+from src.docking_integration import (
+    DockingIntegration, 
+    run_full_docking_pipeline,
+    run_ph_ensemble_docking
+)
+from src.thermodynamics import ThermodynamicEnsemble, aggregate_binding_energy
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -62,7 +67,7 @@ Examples:
     
     # Pipeline mode
     parser.add_argument("--mode", choices=["pka_prediction", "protonation_states", 
-                                          "full_pipeline", "train_models"],
+                                          "full_pipeline", "ph_ensemble_docking", "train_models"],
                        default="pka_prediction",
                        help="Pipeline mode (default: pka_prediction)")
     
@@ -110,6 +115,12 @@ Examples:
                        choices=["best_score", "physiological", "consensus"],
                        default="consensus",
                        help="Criteria for optimal protonation state selection (default: consensus)")
+    
+    # pH-ensemble docking parameters
+    parser.add_argument("--target_ph", type=float, default=7.4,
+                       help="Target pH for ensemble docking (default: 7.4)")
+    parser.add_argument("--probability_threshold", type=float, default=0.01,
+                       help="Minimum microstate probability to include in ensemble (default: 0.01)")
     
     # Other options
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -489,6 +500,64 @@ Examples:
                 logger.info(f"Docking summary saved to {args.output / 'docking_summary.csv'}")
             
             logger.info("Full pipeline completed successfully")
+        
+        # Step 8: pH-aware ensemble docking (new thermodynamic mode)
+        if args.mode == "ph_ensemble_docking":
+            if not args.receptor:
+                logger.error("Receptor file required for pH-ensemble docking mode")
+                return 1
+            
+            if not args.receptor.exists():
+                logger.error(f"Receptor file not found: {args.receptor}")
+                return 1
+            
+            logger.info("Step 7: Running pH-aware ensemble docking")
+            logger.info(f"  pH: {args.target_ph}")
+            logger.info(f"  Probability threshold: {args.probability_threshold if hasattr(args, 'probability_threshold') else 0.01}")
+            
+            ensemble_results = run_ph_ensemble_docking(
+                molecules=molecules,
+                receptor_file=args.receptor,
+                pka_predictions=pka_predictions_list,
+                ph=args.target_ph,
+                docking_tool=args.docking_tool,
+                output_dir=args.output / "ph_ensemble_docking",
+                probability_threshold=getattr(args, 'probability_threshold', 0.01)
+            )
+            
+            # Summarize ensemble docking results
+            summary_data = []
+            for result in ensemble_results:
+                if 'error' not in result:
+                    summary_data.append({
+                        'molecule_id': result['molecule_id'],
+                        'molecule_name': result['molecule_name'],
+                        'pH': result['pH'],
+                        'num_microstates': result['num_microstates'],
+                        'delta_g_ensemble': result['delta_g_ensemble'],
+                        'top_microstate_id': result['top_microstate']['state_id'],
+                        'top_microstate_probability': result['top_microstate']['probability'],
+                        'top_microstate_delta_g': result['top_microstate']['delta_g']
+                    })
+            
+            if summary_data:
+                summary_df = pd.DataFrame(summary_data)
+                summary_file = args.output / "ph_ensemble_summary.csv"
+                summary_df.to_csv(summary_file, index=False)
+                logger.info(f"\nEnsemble docking summary:")
+                logger.info(f"\n{summary_df.to_string(index=False)}")
+                logger.info(f"\nSummary saved to {summary_file}")
+                
+                # Print key results
+                logger.info("\n=== pH-Aware Ensemble Results ===")
+                for row in summary_data:
+                    logger.info(
+                        f"Molecule {row['molecule_id']}: "
+                        f"ΔG_ensemble = {row['delta_g_ensemble']:.2f} kcal/mol "
+                        f"({row['num_microstates']} microstates)"
+                    )
+            
+            logger.info("pH-aware ensemble docking completed successfully")
         
         return 0
         

@@ -35,6 +35,22 @@ interface DockingPose {
   confidence: number;
 }
 
+interface EnsembleMicrostate {
+  state_id: number;
+  probability: number;
+  delta_g: number;
+  charge: number;
+  smiles: string;
+}
+
+interface EnsembleResults {
+  microstates: EnsembleMicrostate[];
+  ensemble_delta_g: number;
+  ph_value: number;
+  num_states: number;
+  probability_threshold: number;
+}
+
 interface JobResults {
   molecule_info?: {
     smiles: string;
@@ -50,6 +66,7 @@ interface JobResults {
     poses: DockingPose[];
     best_score: number;
   };
+  ensemble_results?: EnsembleResults;
 }
 
 interface JobData {
@@ -69,7 +86,7 @@ interface ResultsPanelProps {
 }
 
 export default function ResultsPanel({ jobId }: ResultsPanelProps) {
-  const [activeTab, setActiveTab] = useState<"pka" | "protonation" | "docking" | "visualization">("visualization");
+  const [activeTab, setActiveTab] = useState<"pka" | "protonation" | "docking" | "visualization" | "ensemble">("visualization");
   const [selectedStateId, setSelectedStateId] = useState(0);
 
   const { data: jobResult, isLoading } = useQuery<JobData>({
@@ -176,6 +193,18 @@ export default function ResultsPanel({ jobId }: ResultsPanelProps) {
         >
           Docking Results
         </button>
+        {results?.ensemble_results && (
+          <button
+            onClick={() => setActiveTab("ensemble")}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+              activeTab === "ensemble"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+            }`}
+          >
+            pH-Ensemble
+          </button>
+        )}
         <button
           onClick={() => setActiveTab("pka")}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
@@ -317,6 +346,100 @@ export default function ResultsPanel({ jobId }: ResultsPanelProps) {
                 ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {activeTab === "ensemble" && results?.ensemble_results && (
+          <div className="space-y-4">
+            <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg">
+              <h4 className="font-medium mb-2">pH-Aware Ensemble Binding Energy</h4>
+              <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">
+                ΔG<sub>bind</sub>(pH {results.ensemble_results.ph_value}) = {results.ensemble_results.ensemble_delta_g.toFixed(3)} kcal/mol
+              </p>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+                Thermodynamic average over {results.ensemble_results.num_states} microstate{results.ensemble_results.num_states > 1 ? 's' : ''}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                ΔG<sub>bind</sub>(pH) = Σ<sub>i</sub> P<sub>i</sub>(pH) × ΔG<sub>i</sub>
+              </p>
+            </div>
+
+            <div>
+              <h4 className="font-medium mb-2">Microstate Contributions</h4>
+              <p className="text-xs text-gray-500 dark:text-gray-500 mb-3">
+                Probability threshold: {(results.ensemble_results.probability_threshold * 100).toFixed(1)}%
+              </p>
+              <div className="space-y-2">
+                {results.ensemble_results.microstates
+                  .sort((a, b) => b.probability - a.probability)
+                  .map((state: EnsembleMicrostate, idx: number) => {
+                    const contribution = state.probability * state.delta_g;
+                    return (
+                      <div
+                        key={idx}
+                        className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg"
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <span className="text-sm font-medium">Microstate {state.state_id}</span>
+                            <span className="ml-2 text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded">
+                              Charge: {state.charge > 0 ? "+" : ""}{state.charge}
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-mono text-purple-600 dark:text-purple-400">
+                              P = {(state.probability * 100).toFixed(1)}%
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <span className="text-gray-500">ΔG<sub>i</sub>:</span>
+                            <span className="ml-1 font-mono">{state.delta_g.toFixed(3)} kcal/mol</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Contribution:</span>
+                            <span className="ml-1 font-mono font-semibold">{contribution.toFixed(3)} kcal/mol</span>
+                          </div>
+                        </div>
+                        {/* Progress bar showing probability */}
+                        <div className="mt-2 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                          <div
+                            className="bg-purple-600 h-1.5 rounded-full"
+                            style={{ width: `${state.probability * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+
+            {/* Comparison with single-state result */}
+            {results?.docking_results?.best_score && (
+              <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
+                <h4 className="font-medium mb-2">Comparison with Traditional Approach</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">Single-state (best pose):</span>
+                    <span className="font-mono">{results.docking_results.best_score.toFixed(3)} kcal/mol</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">pH-aware ensemble:</span>
+                    <span className="font-mono">{results.ensemble_results.ensemble_delta_g.toFixed(3)} kcal/mol</span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-gray-200 dark:border-gray-700">
+                    <span className="font-medium">Difference:</span>
+                    <span className="font-mono font-semibold text-purple-600 dark:text-purple-400">
+                      {Math.abs(results.ensemble_results.ensemble_delta_g - results.docking_results.best_score).toFixed(3)} kcal/mol
+                    </span>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-500 mt-3">
+                  The ensemble approach accounts for pH-dependent protonation equilibria, providing a more accurate binding affinity estimate.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>

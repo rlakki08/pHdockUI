@@ -20,6 +20,8 @@ interface JobRequestData {
   quantum_fallback: boolean;
   docking_backend: string;
   receptor_id?: string;
+  ph_ensemble_mode?: boolean;
+  probability_threshold?: number;
 }
 
 interface JobResponse {
@@ -56,7 +58,9 @@ export default function MoleculeInterface() {
     ensemble_size: 5,
     quantum_fallback: false,
     docking_backend: "gnina",
-    receptor_id: "mock"
+    receptor_id: "mock",
+    ph_ensemble_mode: false,
+    probability_threshold: 0.01
   });
 
   // Fetch example molecules
@@ -237,6 +241,40 @@ export default function MoleculeInterface() {
                       <span className="text-sm font-medium">Enable Quantum Fallback</span>
                     </label>
                   </div>
+                  <div>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={settings.ph_ensemble_mode}
+                        onChange={(e) => setSettings({ ...settings, ph_ensemble_mode: e.target.checked })}
+                        className="rounded"
+                      />
+                      <span className="text-sm font-medium">
+                        pH-Aware Ensemble Mode
+                        <span className="text-xs text-gray-500 ml-2">(Thermodynamic averaging)</span>
+                      </span>
+                    </label>
+                  </div>
+                  {settings.ph_ensemble_mode && (
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Probability Threshold
+                        <span className="text-xs text-gray-500 ml-2">(Include states with P &gt; threshold)</span>
+                      </label>
+                      <input
+                        type="number"
+                        value={settings.probability_threshold}
+                        onChange={(e) => setSettings({ ...settings, probability_threshold: parseFloat(e.target.value) })}
+                        min="0.001"
+                        max="0.1"
+                        step="0.001"
+                        className="w-full px-3 py-1 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-900"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Default: 0.01 (1% probability cutoff)
+                      </p>
+                    </div>
+                  )}
                   <div>
                     <label className="block text-sm font-medium mb-1">Receptor</label>
                     <ReceptorSearch
