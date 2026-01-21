@@ -254,6 +254,37 @@ async def root():
 async def health_check():
     return {"status": "healthy", "modules_available": MODULES_AVAILABLE}
 
+@app.get("/debug/modules")
+async def debug_modules():
+    """Check which modules are available"""
+    modules_status = {
+        "MODULES_AVAILABLE": MODULES_AVAILABLE,
+        "THERMODYNAMICS_AVAILABLE": globals().get('THERMODYNAMICS_AVAILABLE', False),
+        "IMPROVED_PKA_MODEL": IMPROVED_PKA_MODEL is not None,
+        "imports": {}
+    }
+    
+    # Test imports
+    try:
+        from thermodynamics import ThermodynamicEnsemble
+        modules_status["imports"]["thermodynamics"] = True
+    except ImportError as e:
+        modules_status["imports"]["thermodynamics"] = str(e)
+    
+    try:
+        from protonation_engine import ProtonationEngine
+        modules_status["imports"]["protonation_engine"] = True
+    except ImportError as e:
+        modules_status["imports"]["protonation_engine"] = str(e)
+    
+    try:
+        from docking_integration import run_ph_ensemble_docking
+        modules_status["imports"]["docking_integration"] = True
+    except ImportError as e:
+        modules_status["imports"]["docking_integration"] = str(e)
+    
+    return modules_status
+
 @app.get("/api/receptors")
 async def get_receptors():
     """Get list of available receptors"""
