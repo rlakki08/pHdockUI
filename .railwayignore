@@ -1,0 +1,64 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+out/
+
+# Git
+.git/
+
+# Benchmarks (large datasets)
+benchmarks/SAMPL6/
+benchmarks/*.csv
+benchmarks/*.json
+
+# Data files
+*.sdf
+*.pdb
+*.mol2
+data/
+datasets/
+models/*.pkl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temp files
+tmp/
+temp/
+*.tmp
+
+# Documentation (not needed for deployment)
+*.md
+*.png
+*.jpg
+*.pdf
+
+# Test files
+test_*.py
+*_test.py
+tests/
